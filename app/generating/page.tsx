@@ -339,8 +339,8 @@ export default function GeneratingPage() {
                   initial={{ opacity: 0, y: 24 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-                  className="mt-10 rounded-2xl border border-gold/40 p-8 text-center"
-                  style={{ background: 'linear-gradient(135deg, #141208 0%, #0E0C06 100%)', boxShadow: '0 0 60px #C9A84C1A' }}
+                  className="mt-10 rounded-2xl border border-gold/40 bg-elevated p-8 text-center"
+                  style={{ boxShadow: '0 0 60px #C9A84C1A' }}
                 >
                   <div className="text-4xl mb-3">📜</div>
                   <h2 className="font-display text-2xl text-gold mb-1">{campaignTitle} is ready</h2>
@@ -403,15 +403,19 @@ function AgentRow({ agent, index, compact = false }: {
         isActive ? 'bg-surface' : 'bg-surface/30',
       )}
       style={{
-        borderColor: isActive ? cfg.color + '44' : isDone ? '' : '#1C2030',
+        borderColor: isActive ? cfg.color + '44' : isDone ? '' : 'rgb(var(--c-border))',
         boxShadow: isActive ? `0 0 16px ${cfg.dimColor}` : 'none',
       }}
     >
       <div className="flex items-start gap-3">
         {/* Status indicator */}
         <span
-          className={clsx('font-ui text-sm mt-0.5 flex-shrink-0 w-4 text-center transition-colors', isActive && 'animate-pulse')}
-          style={{ color: isDone ? '#34D399' : isActive ? cfg.color : '#3D4155' }}
+          className={clsx(
+            'font-ui text-sm mt-0.5 flex-shrink-0 w-4 text-center transition-colors',
+            isActive && 'animate-pulse',
+            !isDone && !isActive && 'text-faint',
+          )}
+          style={{ color: isDone ? '#34D399' : isActive ? cfg.color : undefined }}
         >
           {STATUS_ICON[agent.status] ?? '○'}
         </span>

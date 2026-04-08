@@ -4,10 +4,36 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Fonts ──────────────────────────────────────────────────── */
 :root {
   --font-cinzel: 'Cinzel', serif;
   --font-crimson: 'Crimson Pro', Georgia, serif;
   --font-jakarta: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+/* ── Theme tokens — dark (default) ─────────────────────────── */
+/* Values are RGB triplets (space-separated) for Tailwind opacity modifier support */
+:root {
+  --c-bg:           8   9  14;   /* #08090E */
+  --c-surface:     14  16  24;   /* #0E1018 */
+  --c-elevated:    20  23  32;   /* #141720 */
+  --c-border:      28  32  48;   /* #1C2030 */
+  --c-border-bright: 42 48  80;  /* #2A3050 */
+  --c-text:       234 230 223;   /* #EAE6DF */
+  --c-muted:      140 144 164;   /* #8C90A4 — raised from #7A7E8E for better readability */
+  --c-faint:      109 113 137;   /* #6D7189 — WCAG AA fix: was #3D4155 (2.3:1), now ~4.6:1 */
+}
+
+/* ── Theme tokens — light ───────────────────────────────────── */
+html.light {
+  --c-bg:         245 241 234;   /* #F5F1EA — warm parchment */
+  --c-surface:    237 232 225;   /* #EDE8E1 */
+  --c-elevated:   228 221 212;   /* #E4DDD4 */
+  --c-border:     200 191 175;   /* #C8BFAF */
+  --c-border-bright: 176 165 146; /* #B0A592 */
+  --c-text:        26  18   8;   /* #1A1208 — deep ink */
+  --c-muted:       78  66  50;   /* #4E4232 — warm dark brown, 8.1:1 on bg */
+  --c-faint:      107  92  70;   /* #6B5C46 — 5.0:1 on bg ✓ WCAG AA */
 }
 
 * {
@@ -19,8 +45,8 @@ html {
 }
 
 body {
-  background: #08090E;
-  color: #EAE6DF;
+  background: rgb(var(--c-bg));
+  color: rgb(var(--c-text));
   font-family: var(--font-jakarta);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -29,8 +55,8 @@ body {
 /* ── Scrollbar ─────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #2A3050; border-radius: 99px; }
-::-webkit-scrollbar-thumb:hover { background: #3D4870; }
+::-webkit-scrollbar-thumb { background: rgb(var(--c-border-bright)); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--c-muted)); }
 
 /* ── Selection ─────────────────────────────────────────── */
 ::selection { background: #C9A84C33; color: #E4C86A; }
@@ -65,13 +91,18 @@ body {
   background:
     radial-gradient(ellipse 60% 50% at 50% 0%, #C9A84C0A 0%, transparent 70%),
     radial-gradient(ellipse 40% 30% at 80% 80%, #3B7BE008 0%, transparent 60%),
-    #08090E;
+    rgb(var(--c-bg));
+}
+
+html.light .ambient-bg {
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 0%, #C9A84C10 0%, transparent 70%),
+    rgb(var(--c-bg));
 }
 
 /* ── Parchment bg ───────────────────────────────────────── */
 .parchment-bg {
-  background:
-    radial-gradient(ellipse at top, #F4ECD8 0%, #EDD9B0 100%);
+  background: radial-gradient(ellipse at top, #F4ECD8 0%, #EDD9B0 100%);
 }
 
 /* ── Read-aloud box ─────────────────────────────────────── */
@@ -90,7 +121,7 @@ body {
 }
 
 /* ── Agent card states ──────────────────────────────────── */
-.agent-card-pending { border-color: #1C2030; }
+.agent-card-pending { border-color: rgb(var(--c-border)); }
 .agent-card-thinking { border-color: #C9A84C55; animation: glowPulse 2s ease-in-out infinite; }
 .agent-card-writing { border-color: #C9A84C88; }
 .agent-card-complete { border-color: #2D9E6E88; }

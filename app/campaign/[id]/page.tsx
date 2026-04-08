@@ -73,7 +73,7 @@ export default function CampaignPage() {
   ]
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
       {/* Sidebar overlay on mobile */}
       <AnimatePresence>
         {sidebarOpen && (
@@ -90,10 +90,9 @@ export default function CampaignPage() {
       {/* Sidebar */}
       <aside
         className={clsx(
-          'fixed top-0 left-0 h-full w-72 border-r border-border flex flex-col z-50 transition-transform duration-300 lg:translate-x-0 lg:static lg:flex-shrink-0',
+          'fixed top-0 left-0 h-full w-72 border-r border-border bg-bg flex flex-col z-50 transition-transform duration-300 lg:translate-x-0 lg:relative lg:flex-shrink-0',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         )}
-        style={{ background: '#0A0B10' }}
       >
         {/* Header */}
         <div className="px-5 py-5 border-b border-border flex-shrink-0">
@@ -148,7 +147,7 @@ export default function CampaignPage() {
       </aside>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top bar */}
         <header className="sticky top-0 z-30 border-b border-border bg-bg/90 backdrop-blur-sm flex items-center gap-3 px-4 py-3 flex-shrink-0">
           <button

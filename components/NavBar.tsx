@@ -5,13 +5,15 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
 import clsx from 'clsx'
-import { LogOut, BookOpen, Plus } from 'lucide-react'
+import { LogOut, BookOpen, Plus, Sun, Moon } from 'lucide-react'
+import { useTheme } from '@/lib/theme'
 
 export default function NavBar() {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const supabase = createClient()
+  const { theme, toggle } = useTheme()
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user))
@@ -35,7 +37,7 @@ export default function NavBar() {
           <span className="font-display text-sm text-text tracking-wide">Campaign Forge</span>
         </button>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           {user ? (
             <>
               <button
@@ -54,7 +56,7 @@ export default function NavBar() {
               </button>
               <button
                 onClick={signOut}
-                className="p-1.5 rounded-lg text-faint hover:text-muted hover:bg-elevated transition-all"
+                className="p-2 rounded-lg text-faint hover:text-muted hover:bg-elevated transition-all"
                 aria-label="Sign out"
               >
                 <LogOut className="w-4 h-4" />
@@ -68,6 +70,18 @@ export default function NavBar() {
               Sign In
             </button>
           )}
+
+          {/* Theme toggle — always visible */}
+          <button
+            onClick={toggle}
+            className="p-2 rounded-lg text-faint hover:text-muted hover:bg-elevated transition-all ml-1"
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {theme === 'dark'
+              ? <Sun className="w-4 h-4" />
+              : <Moon className="w-4 h-4" />
+            }
+          </button>
         </div>
       </div>
     </nav>

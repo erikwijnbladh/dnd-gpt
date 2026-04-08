@@ -160,7 +160,7 @@ export default function AtmosphericLoader({ idea }: { idea: string }) {
             style={{
               width: i === idx ? 20 : 6,
               height: 6,
-              background: i === idx ? phase.color : '#1C2030',
+              background: i === idx ? phase.color : 'rgb(var(--c-border))',
             }}
           />
         ))}

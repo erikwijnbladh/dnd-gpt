@@ -1,24 +1,46 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowRight, Sparkles, BookOpen, Users, Zap } from 'lucide-react'
 import { useStore } from '@/lib/store'
 import clsx from 'clsx'
 
-const EXAMPLE_IDEAS = [
+const ALL_IDEAS = [
   'A dying world where flesh and machine have been fused by a corrupting radiant force',
   'Pirates discover an ancient god sleeping beneath the ocean floor',
   'A city where memories are currency and the poor are forced to forget',
   'A dark gothic adventure in a cursed village that no one can leave',
+  'An empire built on the bones of a dead god slowly comes back to life',
+  'Time travelers stranded in a medieval war must prevent a paradox',
+  'A heist to steal a spell from the mind of a sleeping archmage',
+  'Exiled nobles must reclaim a kingdom that has forgotten they existed',
+  'A carnival that travels between planes, selling impossible things',
+  'The last dragons disguise themselves as humans — and are running out of time',
+  'Rebels fight an empire that weaponizes grief and nostalgia',
+  'A lighthouse keeper discovers the sea is a graveyard of lost timelines',
+  'A plague that turns the infected into living statues — but they\'re still conscious',
+  'Underground city-states wage cold war over the last source of sunlight',
+  'A murder mystery aboard a spelljammer ship with no way to escape',
 ]
+
+function shuffled<T>(arr: T[]): T[] {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
 
 const FEATURES = [
   { icon: BookOpen, label: 'Full campaign book', desc: 'Chapters, encounters, read-aloud text' },
   { icon: Users, label: 'Complete NPC roster', desc: 'Personalities, dialogue, secrets' },
   { icon: Zap, label: 'Parallel AI agents', desc: 'Multiple writers, one coherent story' },
 ]
+
+const TYPEWRITER_PROMPTS = shuffled(ALL_IDEAS)
 
 export default function LandingPage() {
   const router = useRouter()
@@ -27,6 +49,57 @@ export default function LandingPage() {
   const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Randomized suggestion pills — pick 4 on mount
+  const exampleIdeas = useMemo(() => shuffled(ALL_IDEAS).slice(0, 4), [])
+
+  // Typewriter placeholder
+  const [placeholder, setPlaceholder] = useState('')
+  const promptIndexRef = useRef(0)
+  const charIndexRef = useRef(0)
+  const deletingRef = useRef(false)
+  const pauseRef = useRef(false)
+
+  useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout>
+
+    const tick = () => {
+      if (pauseRef.current) {
+        timeout = setTimeout(tick, 1800)
+        pauseRef.current = false
+        return
+      }
+
+      const current = TYPEWRITER_PROMPTS[promptIndexRef.current]
+
+      if (!deletingRef.current) {
+        charIndexRef.current++
+        setPlaceholder(current.slice(0, charIndexRef.current))
+
+        if (charIndexRef.current === current.length) {
+          pauseRef.current = true
+          deletingRef.current = true
+          timeout = setTimeout(tick, 1800)
+          return
+        }
+        timeout = setTimeout(tick, 38)
+      } else {
+        charIndexRef.current--
+        setPlaceholder(current.slice(0, charIndexRef.current))
+
+        if (charIndexRef.current === 0) {
+          deletingRef.current = false
+          promptIndexRef.current = (promptIndexRef.current + 1) % TYPEWRITER_PROMPTS.length
+          timeout = setTimeout(tick, 400)
+          return
+        }
+        timeout = setTimeout(tick, 18)
+      }
+    }
+
+    timeout = setTimeout(tick, 600)
+    return () => clearTimeout(timeout)
+  }, [])
 
   // Auto-resize textarea
   useEffect(() => {
@@ -92,12 +165,11 @@ export default function LandingPage() {
       >
         <div
           className={clsx(
-            'relative rounded-2xl border transition-all duration-300',
+            'relative rounded-2xl border bg-surface transition-all duration-300',
             focused
               ? 'border-gold/50 shadow-[0_0_40px_#C9A84C22]'
               : 'border-border hover:border-border-bright'
           )}
-          style={{ background: 'linear-gradient(135deg, #0E1018 0%, #0A0B10 100%)' }}
         >
           <textarea
             ref={textareaRef}
@@ -106,7 +178,7 @@ export default function LandingPage() {
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             onKeyDown={handleKey}
-            placeholder="Describe your campaign idea… (e.g. A dying world where flesh and machine have been fused…)"
+            placeholder={placeholder || 'Describe your campaign idea…'}
             aria-label="Campaign idea"
             className="w-full bg-transparent text-text font-ui text-base resize-none px-5 pt-5 pb-14 rounded-2xl placeholder:text-faint focus:outline-none leading-relaxed min-h-[72px]"
             rows={1}
@@ -153,7 +225,7 @@ export default function LandingPage() {
       >
         <p className="text-xs text-faint font-ui mb-2 px-1">Try an example:</p>
         <div className="flex flex-wrap gap-2">
-          {EXAMPLE_IDEAS.map((ex) => (
+          {exampleIdeas.map((ex) => (
             <button
               key={ex}
               onClick={() => {

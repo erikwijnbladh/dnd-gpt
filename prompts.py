@@ -120,51 +120,75 @@ Return JSON in this exact format:
 }}
 """
 
-CHAPTER_PROMPT = """Write the full content for this chapter of the D&D campaign.
+CHAPTER_PROMPT = """You are writing Chapter {chapter_number} of a D&D campaign book. You are a professional campaign author.
 
-CAMPAIGN TITLE: {campaign_title}
-CAMPAIGN PREMISE: {premise}
-THREE ACT STRUCTURE: {three_act}
+═══════════════════════════════════════
+CAMPAIGN OVERVIEW
+═══════════════════════════════════════
+Title: {campaign_title}
+Premise: {premise}
+Three-act structure: {three_act}
 
-CHAPTER TO WRITE:
+Full chapter plan (all chapters, for context):
+{all_chapters_plan}
+
+═══════════════════════════════════════
+NAMED NPCs — USE EXACT NAMES ONLY
+═══════════════════════════════════════
+These are the ONLY major characters in this campaign. Do not invent new named characters.
+Every social encounter must involve at least one of these NPCs.
+DM Notes must explicitly describe each relevant NPC's actions and motivations in this chapter.
+
+{npc_roster}
+
+═══════════════════════════════════════
+STORY SO FAR (what happened in previous chapters)
+═══════════════════════════════════════
+{prior_chapters_context}
+
+═══════════════════════════════════════
+THIS CHAPTER
+═══════════════════════════════════════
 Number: {chapter_number}
 Title: {chapter_title}
 Synopsis: {chapter_synopsis}
 Key moments that must happen: {key_moments}
 
-Write the complete chapter content. Include:
-1. A "Scene Setting" section explaining what has happened and where the players are
-2. 2-4 "Read-Aloud" text boxes (text the DM reads directly to players, 2-4 sentences each, atmospheric)
-3. Detailed "DM Notes" explaining what is happening behind the scenes
-4. At least 2 encounters (can be combat, social, exploration, or puzzle)
-5. "What Happens Next" - how this chapter leads to the next
+═══════════════════════════════════════
+WRITING RULES
+═══════════════════════════════════════
+1. Every NPC listed above who is active in this chapter MUST appear by exact name in dm_notes and relevant encounters.
+2. Scene_setting must explicitly reference what happened in the previous chapter to create continuity.
+3. Each encounter's setup and dm_notes must name which NPC is involved.
+4. What_happens_next must name the specific NPCs and locations the players will encounter next.
+5. Treat this as one chapter of a coherent novel — events and NPC states carry over from prior chapters.
 
-Format as a structured JSON:
+Return JSON:
 {{
   "chapter_id": "{chapter_id}",
-  "scene_setting": "Full scene setting text",
+  "scene_setting": "2-3 paragraphs. Open by referencing what just happened (previous chapter outcome). Set the scene vividly.",
   "read_aloud_boxes": [
     {{
       "id": "ra1",
-      "trigger": "When to read this (e.g., 'When players first enter the village')",
-      "text": "The atmospheric text to read aloud. Written in present tense, second person. Vivid and evocative."
+      "trigger": "Specific trigger condition",
+      "text": "Atmospheric text read aloud to players. Present tense, 3-5 sentences."
     }}
   ],
-  "dm_notes": "Detailed notes for the DM about what is really happening, NPC motivations, secrets",
+  "dm_notes": "Detailed behind-the-scenes notes. Must include: (a) what each active NPC is doing and why, (b) secrets the players don't know yet, (c) how this chapter's events change the NPC relationships going forward.",
   "encounters": [
     {{
       "id": "enc_ch{chapter_number}_1",
       "name": "Encounter name",
-      "type": "combat" | "social" | "exploration" | "puzzle",
-      "difficulty": "easy" | "medium" | "hard",
-      "setup": "How this encounter begins",
-      "read_aloud": "Text to read when encounter begins",
-      "dm_notes": "How to run this encounter, tactics, outcomes",
-      "rewards": "What players gain from this encounter",
-      "failure_state": "What happens if players fail or avoid this"
+      "type": "combat | social | exploration | puzzle",
+      "difficulty": "easy | medium | hard",
+      "setup": "How this encounter begins. Name the NPC involved if social.",
+      "read_aloud": "Text to read when the encounter begins.",
+      "dm_notes": "How to run it. NPC tactics and dialogue cues. Branching outcomes.",
+      "rewards": "Concrete rewards — information, items, NPC trust, story advancement.",
+      "failure_state": "What happens if players fail or skip this."
     }}
   ],
-  "what_happens_next": "Bridge text explaining how this leads to the next chapter"
+  "what_happens_next": "2-3 sentences. Name the specific NPCs and location the players move toward. Set up the next chapter's opening situation explicitly."
 }}
 """
 
@@ -178,8 +202,12 @@ NPC TO WRITE:
 Name: {npc_name}
 Role in story: {npc_role}
 Importance: {npc_importance}
+First appears in: {npc_first_appears}
 
-Write a complete NPC profile that will help a first-time DM bring this character to life.
+Chapters they are active in (use these to make the NPC's arc specific and concrete):
+{npc_chapter_context}
+
+Write a complete NPC profile. Their arc, goals, and behaviour must be grounded in the specific chapters listed above — not generic.
 
 Return JSON:
 {{
@@ -190,10 +218,17 @@ Return JSON:
   "appearance": "3-4 sentence vivid physical description",
   "personality_traits": ["trait1", "trait2", "trait3"],
   "ideals": "What they believe in most deeply",
-  "bonds": "Who or what they care about",
+  "bonds": "Who or what they care about most (must reference campaign-specific people/places)",
   "flaws": "Their greatest weakness or blind spot",
-  "secret": "Something they are hiding (or null if none)",
-  "speech_pattern": "How they talk — accent, vocabulary, habits",
+  "secret": "Something they are hiding that is directly relevant to the campaign plot (not generic)",
+  "speech_pattern": "How they talk — accent, vocabulary, verbal habits",
+  "campaign_arc": "2-3 sentences describing how this NPC changes across the campaign — their journey from first appearance to the end",
+  "chapter_roles": [
+    {{
+      "chapter": "ch1",
+      "role": "Exactly what this NPC is doing in this chapter and why"
+    }}
+  ],
   "sample_dialogue": [
     {{
       "situation": "When players first meet them",
@@ -208,8 +243,7 @@ Return JSON:
       "line": "Example line of dialogue"
     }}
   ],
-  "role_in_story": "Detailed explanation of their story function",
-  "dm_tips": "3-4 tips for a first-time DM on how to play this NPC effectively",
+  "dm_tips": ["tip1 — specific to how this NPC behaves across the campaign", "tip2", "tip3", "tip4"],
   "stat_block_summary": {{
     "alignment": "e.g., Lawful Good",
     "challenge_rating": "number or null",
@@ -289,13 +323,16 @@ Return JSON:
 QUALITY_CHECK_PROMPT = """You are reviewing a complete D&D campaign for a first-time Dungeon Master.
 Check the following:
 1. Is the campaign coherent? Do the chapters connect logically?
-2. Are the NPCs consistent throughout?
+2. Are the named NPCs referenced consistently across chapters by their exact names?
 3. Is the difficulty appropriate for new players?
 4. Are there any plot holes or unanswered questions?
 5. Is there enough guidance for a first-time DM?
 
 Campaign title: {campaign_title}
-Chapter summaries: {chapter_summaries}
+Named NPCs: {npc_list}
+
+Chapter content (scene setting + DM notes excerpts):
+{chapter_content}
 
 Return a JSON report:
 {{
