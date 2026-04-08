@@ -1,56 +1,74 @@
-# D&D Campaign Generator CLI
+# Campaign Forge
 
-AI-powered campaign creation for first-time Dungeon Masters.
+AI-powered D&D campaign generator for first-time (and veteran) Dungeon Masters.
 
-## Setup
+Describe your idea, answer a few questions, and get a complete campaign book — chapters, NPCs, encounters, and DM notes — generated in about 2 minutes.
 
+## Stack
+
+- **Next.js 15** — App Router, React 19
+- **OpenAI** — orchestrator + parallel writer agents
+- **Supabase** — auth & campaign storage
+- **Zustand** — client state
+- **Tailwind CSS + Framer Motion** — UI
+
+## Getting Started
+
+### 1. Supabase
+
+Create a free project at [supabase.com](https://supabase.com), then run the migration.
+
+**Option A — Supabase CLI:**
 ```bash
-# 1. Install dependencies
-pip install -r requirements.txt
-
-# 2. Configure your API key
-cp .env.example .env
-# Edit .env and add your OPENAI_API_KEY
+supabase link --project-ref <your-project-ref>
+supabase db push
 ```
 
-## Usage
+**Option B — Supabase dashboard:**
+Go to **SQL Editor** and paste the contents of `supabase/migrations/20240101000000_init.sql`.
+
+### 2. Environment variables
 
 ```bash
-# Full interactive mode (recommended)
-python cli.py "A dark gothic adventure in a cursed village"
-
-# Skip the clarifying questions
-python cli.py "Pirates discover an ancient god sleeping beneath the ocean" --skip-plan
-
-# Save to a specific folder + get JSON output too
-python cli.py "A political intrigue in a city of thieves" --output ./campaigns --json
+cp .env.example .env.local
 ```
 
-## What It Does
+Fill in `.env.local`:
+```
+OPENAI_API_KEY=
+NEXT_PUBLIC_SUPABASE_URL=      # Settings → API → Project URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY= # Settings → API → anon public key
+```
 
-1. **Plan Mode** — The AI reads your idea and asks 6 clarifying questions (setting, tone, player count, etc.)
-2. **Orchestrator** — GPT-5 designs the full campaign skeleton (chapters, NPCs, encounters, 3-act structure)
-3. **Parallel Agents** — Multiple GPT-5 mini agents write each chapter, NPC, and the appendix simultaneously
-4. **Quality Check** — GPT-5 reviews the full campaign for coherence
-5. **Output** — A complete Markdown campaign book with read-aloud boxes, NPC profiles, encounter blocks, appendix
+### 3. Run
 
-## Output Structure
+```bash
+bun install   # or: npm install
+bun dev
+```
 
-The generated `.md` file contains:
-- Campaign introduction & premise
-- 3-act structure overview
+Open [http://localhost:3000](http://localhost:3000).
+
+## How It Works
+
+1. **Idea** — You describe your campaign concept
+2. **Plan** — The AI asks clarifying questions (tone, setting, player count, etc.)
+3. **Generate** — An orchestrator designs the full campaign skeleton, then parallel agents write each chapter, NPC, and encounter simultaneously
+4. **Review** — A final pass checks for coherence
+5. **Output** — A complete campaign book saved to your account
+
+## What's Generated
+
+- Campaign premise & 3-act structure
 - Full chapter content with DM notes & read-aloud text
-- NPC roster with personality, dialogue samples, stat blocks
-- Appendix: glossary, locations, magic items, monsters, DM cheat sheet
-- Quality check report
+- NPC roster with personalities, dialogue samples, and secrets
+- Encounter blocks
+- Appendix: locations, magic items, monsters, DM cheat sheet
 
-## Model Config
-
-Edit `.env` to change which OpenAI models are used:
+## Environment Variables
 
 ```
-ORCHESTRATOR_MODEL=gpt-4.1      # The campaign designer / quality checker
-AGENT_MODEL=gpt-4.1-mini        # The parallel writers (one per chapter/NPC)
+OPENAI_API_KEY=
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
 ```
-
-Swap in GPT-5 model IDs when available.
