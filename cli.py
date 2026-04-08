@@ -113,7 +113,7 @@ async def ask_clarifying_questions(idea: str) -> list[dict]:
 
     text = response.choices[0].message.content.strip()
     data = json.loads(text)
-    return data.get("questions", [])
+    return data.get("questions", []), data.get("already_known", {})
 
 
 def run_plan_mode(idea: str) -> dict[str, str]:
@@ -133,14 +133,32 @@ def run_plan_mode(idea: str) -> dict[str, str]:
     )
     console.print()
 
-    questions = asyncio.run(ask_clarifying_questions(idea))
+    questions, already_known = asyncio.run(ask_clarifying_questions(idea))
+
+    # Show what the AI already understood from the idea
+    understood = {k: v for k, v in already_known.items() if v}
+    if understood:
+        understood_lines = "\n".join(
+            f"[dim]  ✓ [/dim][white]{k.title()}:[/white] [dim]{v}[/dim]"
+            for k, v in understood.items()
+        )
+        console.print(
+            Panel(
+                understood_lines,
+                title="[dim]Already clear from your idea[/dim]",
+                border_style="dim",
+                padding=(0, 1),
+            )
+        )
+        console.print()
 
     if not questions:
-        console.print("[yellow]Could not generate clarifying questions. Proceeding with defaults.[/yellow]")
+        console.print("[green]Your idea is detailed enough — no questions needed. Generating now.[/green]\n")
         return {}
 
+    q_word = "question" if len(questions) == 1 else "questions"
     console.print(
-        f"[gold1]I have [bold]{len(questions)}[/bold] questions before I start writing your campaign.[/gold1]\n"
+        f"[gold1]Just [bold]{len(questions)}[/bold] {q_word} before I start writing.[/gold1]\n"
         f"[dim]Take your time — your answers shape everything.[/dim]\n"
     )
 

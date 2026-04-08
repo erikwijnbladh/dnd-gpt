@@ -13,11 +13,70 @@ from prompts import (
     NPC_PROMPT,
     APPENDIX_PROMPT,
     QUALITY_CHECK_PROMPT,
+    HOW_TO_RUN_PROMPT,
 )
 
 ORCHESTRATOR_MODEL = os.getenv("ORCHESTRATOR_MODEL", "gpt-5.4")
 AGENT_MODEL = os.getenv("AGENT_MODEL", "gpt-5.4-mini")
 NANO_MODEL = os.getenv("NANO_MODEL", "gpt-5.4-nano")
+
+
+def _normalize_list_of_dicts(val: Any, keys: list[str]) -> list[dict]:
+    """
+    Coerce a value that should be a list of dicts into exactly that.
+    Handles: already correct, list of strings, single dict, single string.
+    `keys` = the expected keys, used to parse 'key: value' strings as a fallback.
+    """
+    if not val:
+        return []
+    if isinstance(val, dict):
+        val = [val]
+    if not isinstance(val, list):
+        val = [val]
+    result = []
+    for item in val:
+        if isinstance(item, dict):
+            result.append(item)
+        elif isinstance(item, str):
+            # Best-effort: try to split "Term: Definition" style strings
+            if ":" in item and len(keys) >= 2:
+                parts = item.split(":", 1)
+                result.append({keys[0]: parts[0].strip(), keys[1]: parts[1].strip()})
+            else:
+                result.append({keys[0]: item})
+    return result
+
+
+def _normalize_appendix(appendix: dict) -> dict:
+    """Ensure appendix arrays are always lists of dicts, never lists of strings."""
+    appendix["glossary"] = _normalize_list_of_dicts(
+        appendix.get("glossary", []), ["term", "definition"]
+    )
+    appendix["locations"] = _normalize_list_of_dicts(
+        appendix.get("locations", []), ["name", "description"]
+    )
+    appendix["magic_items"] = _normalize_list_of_dicts(
+        appendix.get("magic_items", []), ["name", "description"]
+    )
+    appendix["monsters"] = _normalize_list_of_dicts(
+        appendix.get("monsters", []), ["name", "description"]
+    )
+    return appendix
+
+
+def _normalize_npc(npc: dict) -> dict:
+    """Ensure NPC fields are the expected types."""
+    # dm_tips must be a list of strings
+    tips = npc.get("dm_tips", [])
+    if isinstance(tips, str):
+        npc["dm_tips"] = [t.strip() for t in tips.split("\n") if t.strip()]
+    elif isinstance(tips, list):
+        npc["dm_tips"] = [str(t) for t in tips]
+    # personality_traits must be a list
+    traits = npc.get("personality_traits", [])
+    if isinstance(traits, str):
+        npc["personality_traits"] = [t.strip() for t in traits.split(",") if t.strip()]
+    return npc
 
 
 def _parse_json(text: str) -> Any:
@@ -154,7 +213,7 @@ async def generate_npc(
         response_format={"type": "json_object"},
     )
 
-    result = _parse_json(response.choices[0].message.content)
+    result = _normalize_npc(_parse_json(response.choices[0].message.content))
     await on_progress(f"npc_{npc['id']}", "complete", f"✓ {npc['name']} ready")
     return result
 
@@ -193,8 +252,48 @@ async def generate_appendix(
         response_format={"type": "json_object"},
     )
 
-    result = _parse_json(response.choices[0].message.content)
+    result = _normalize_appendix(_parse_json(response.choices[0].message.content))
     await on_progress("appendix", "complete", "✓ Appendix compiled")
+    return result
+
+
+async def generate_how_to_run(
+    client: AsyncOpenAI,
+    skeleton: dict,
+    on_progress,
+) -> dict:
+    """Nano agent: write the first-time DM guide for this specific campaign."""
+    await on_progress("how_to_run", "writing", "Writing first-time DM guide…")
+
+    chapter_list = "; ".join(
+        f"Chapter {c['number']}: {c['title']}" for c in skeleton.get("chapters", [])
+    )
+    npc_list = ", ".join(n["name"] for n in skeleton.get("npcs", []))
+    total_sessions = skeleton.get("total_sessions", len(skeleton.get("chapters", [])))
+    player_count = skeleton.get("player_count", 4)
+
+    prompt = HOW_TO_RUN_PROMPT.format(
+        campaign_title=skeleton["title"],
+        premise=skeleton["premise"],
+        chapter_count=len(skeleton.get("chapters", [])),
+        total_sessions=total_sessions,
+        player_count=player_count,
+        chapter_list=chapter_list,
+        npc_list=npc_list,
+    )
+
+    response = await client.chat.completions.create(
+        model=NANO_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_ORCHESTRATOR},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.5,
+        response_format={"type": "json_object"},
+    )
+
+    result = _parse_json(response.choices[0].message.content)
+    await on_progress("how_to_run", "complete", "✓ DM guide ready")
     return result
 
 
@@ -282,8 +381,11 @@ async def generate_campaign(
     if errors:
         await on_progress("warning", "error", f"Some agents had issues: {'; '.join(errors[:3])}")
 
-    # Step 3: Appendix
-    appendix = await generate_appendix(client, skeleton, chapters, npcs, on_progress)
+    # Step 3: Appendix + DM guide in parallel (both independent of each other)
+    appendix, how_to_run = await asyncio.gather(
+        generate_appendix(client, skeleton, chapters, npcs, on_progress),
+        generate_how_to_run(client, skeleton, on_progress),
+    )
 
     # Step 4: Quality check
     qc = await quality_check(client, skeleton, chapters, on_progress)
@@ -293,5 +395,6 @@ async def generate_campaign(
         "chapters": chapters,
         "npcs": npcs,
         "appendix": appendix,
+        "how_to_run": how_to_run,
         "quality_check": qc,
     }

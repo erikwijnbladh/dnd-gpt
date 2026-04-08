@@ -9,11 +9,28 @@ def _slug(text: str) -> str:
     return text.lower().replace(" ", "-").replace("'", "").replace('"', "")[:40]
 
 
+def _g(obj, key: str, default="") -> str:
+    """Safely get a value from a dict that might actually be a string."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return default
+
+
+def _as_list(val) -> list:
+    """Ensure a value that should be a list actually is one."""
+    if isinstance(val, list):
+        return val
+    if val:
+        return [val]
+    return []
+
+
 def render_campaign(campaign: dict, output_dir: Path = Path(".")) -> Path:
     skeleton = campaign["skeleton"]
     chapters = campaign["chapters"]
     npcs = campaign["npcs"]
     appendix = campaign["appendix"]
+    how_to_run = campaign.get("how_to_run", {})
     qc = campaign.get("quality_check", {})
 
     title = skeleton.get("title", "My Campaign")
@@ -31,6 +48,79 @@ def render_campaign(campaign: dict, output_dir: Path = Path(".")) -> Path:
         "---",
         "",
     ]
+
+    # ─── How to Run This Campaign ────────────────────────────────────────
+    if how_to_run:
+        lines += [
+            "---",
+            "",
+            "## How to Run This Campaign",
+            "",
+            "> This section is for you, the Dungeon Master. Read this before anything else.",
+            "",
+        ]
+
+        # Before session 1
+        bef = how_to_run.get("before_session_1", {})
+        if bef:
+            lines += [f"### {bef.get('title', 'Before Your First Session')}", ""]
+            for i, step in enumerate(_as_list(bef.get("steps", [])), 1):
+                lines.append(f"{i}. {step}")
+            lines.append("")
+            if bef.get("what_to_tell_your_players"):
+                lines += [
+                    "**What to tell your players before you begin:**",
+                    "",
+                    f"> {bef['what_to_tell_your_players']}",
+                    "",
+                ]
+
+        # Session plan
+        session_plan = _as_list(how_to_run.get("session_plan", []))
+        if session_plan:
+            lines += ["### Session-by-Session Plan", ""]
+            for s in session_plan:
+                if not isinstance(s, dict):
+                    continue
+                chapters_covered = ", ".join(_as_list(s.get("chapters_to_cover", [])))
+                lines += [
+                    f"**Session {s.get('session_number', '?')}** — {chapters_covered}",
+                    "",
+                    f"- *Goal:* {s.get('goal', '')}",
+                    f"- *Focus on:* {s.get('dm_focus', '')}",
+                    "",
+                ]
+
+        # Running a session loop
+        loop = how_to_run.get("running_a_session", {})
+        if loop:
+            lines += [f"### {loop.get('title', 'How to Run a Session')}", ""]
+            if loop.get("intro"):
+                lines += [loop["intro"], ""]
+            for i, step in enumerate(_as_list(loop.get("steps", [])), 1):
+                lines.append(f"{i}. {step}")
+            lines.append("")
+
+        # Off script
+        off = how_to_run.get("when_players_go_off_script", {})
+        if off:
+            lines += [f"### {off.get('title', 'When Players Go Off Script')}", ""]
+            for rule in _as_list(off.get("rules", [])):
+                lines.append(f"- {rule}")
+            lines.append("")
+
+        # Quick reference card
+        qrc = how_to_run.get("quick_reference_card", {})
+        if qrc:
+            lines += [
+                f"### {qrc.get('title', 'Quick Reference')}",
+                "",
+            ]
+            for item in _as_list(qrc.get("items", [])):
+                lines.append(f"- {item}")
+            lines.append("")
+
+        lines += ["---", ""]
 
     # ─── Table of Contents ───────────────────────────────────────────────
     lines += ["## Table of Contents", ""]
@@ -211,7 +301,12 @@ def render_campaign(campaign: dict, output_dir: Path = Path(".")) -> Path:
             "**DM Tips:**",
             "",
         ]
-        for tip in npc.get("dm_tips", "").split("\n") if isinstance(npc.get("dm_tips"), str) else [npc.get("dm_tips", "")]:
+        raw_tips = npc.get("dm_tips", "")
+        if isinstance(raw_tips, list):
+            tips = [str(t) for t in raw_tips]
+        else:
+            tips = str(raw_tips).split("\n")
+        for tip in tips:
             if tip.strip():
                 lines.append(f"- {tip.strip()}")
         lines += ["", ""]
@@ -240,82 +335,94 @@ def render_campaign(campaign: dict, output_dir: Path = Path(".")) -> Path:
     ]
 
     # Glossary
-    glossary = appendix.get("glossary", [])
+    glossary = _as_list(appendix.get("glossary", []))
     if glossary:
         lines += ["### Glossary", ""]
         for entry in glossary:
-            lines.append(f"**{entry.get('term', '')}** — {entry.get('definition', '')}")
+            if isinstance(entry, dict):
+                lines.append(f"**{_g(entry, 'term')}** — {_g(entry, 'definition')}")
+            else:
+                lines.append(str(entry))
             lines.append("")
 
     # Locations
-    locations = appendix.get("locations", [])
+    locations = _as_list(appendix.get("locations", []))
     if locations:
         lines += ["### Key Locations", ""]
         for loc in locations:
+            if not isinstance(loc, dict):
+                lines += [str(loc), ""]
+                continue
             lines += [
-                f"#### {loc.get('name', 'Unknown Location')} `{loc.get('type', '').upper()}`",
+                f"#### {_g(loc, 'name', 'Unknown Location')} `{_g(loc, 'type').upper()}`",
                 "",
-                loc.get("description", ""),
+                _g(loc, "description"),
                 "",
-                f"*Atmosphere:* {loc.get('atmosphere', '')}",
+                f"*Atmosphere:* {_g(loc, 'atmosphere')}",
                 "",
             ]
-            for feat in loc.get("key_features", []):
+            for feat in _as_list(loc.get("key_features", [])):
                 lines.append(f"- {feat}")
-            lines += ["", f"**DM Notes:** {loc.get('dm_notes', '')}", ""]
+            lines += ["", f"**DM Notes:** {_g(loc, 'dm_notes')}", ""]
 
     # Magic Items
-    items = appendix.get("magic_items", [])
+    items = _as_list(appendix.get("magic_items", []))
     if items:
         lines += ["### Magic Items", ""]
         for item in items:
+            if not isinstance(item, dict):
+                lines += [str(item), ""]
+                continue
             lines += [
-                f"#### {item.get('name', 'Unknown Item')} *(Rarity: {item.get('rarity', '').title()})*",
+                f"#### {_g(item, 'name', 'Unknown Item')} *(Rarity: {_g(item, 'rarity').title()})*",
                 "",
-                item.get("description", ""),
+                _g(item, "description"),
                 "",
-                f"**Properties:** {item.get('properties', '')}",
+                f"**Properties:** {_g(item, 'properties')}",
                 "",
-                f"**Found:** {item.get('where_found', '')}",
+                f"**Found:** {_g(item, 'where_found')}",
                 "",
             ]
 
     # Monsters
-    monsters = appendix.get("monsters", [])
+    monsters = _as_list(appendix.get("monsters", []))
     if monsters:
         lines += ["### Monsters & Enemies", ""]
         for m in monsters:
+            if not isinstance(m, dict):
+                lines += [str(m), ""]
+                continue
             lines += [
-                f"#### {m.get('name', 'Unknown')} CR {m.get('challenge_rating', '?')}",
+                f"#### {_g(m, 'name', 'Unknown')} CR {_g(m, 'challenge_rating', '?')}",
                 "",
-                m.get("description", ""),
+                _g(m, "description"),
                 "",
                 f"| HP | AC | Speed |",
                 f"|----|----|----|",
-                f"| {m.get('hit_points', '—')} | {m.get('armor_class', '—')} | {m.get('speed', '—')} |",
+                f"| {_g(m, 'hit_points', '—')} | {_g(m, 'armor_class', '—')} | {_g(m, 'speed', '—')} |",
                 "",
-                f"**Tactics:** {m.get('tactics', '')}",
+                f"**Tactics:** {_g(m, 'tactics')}",
                 "",
-                f"**Loot:** {m.get('loot', 'Nothing special')}",
+                f"**Loot:** {_g(m, 'loot', 'Nothing special')}",
                 "",
             ]
 
     # DM Quick Reference
     qref = appendix.get("dm_quick_reference", {})
-    if qref:
+    if qref and isinstance(qref, dict):
         lines += [
             "### DM Quick Reference",
             "",
             "**Core Rules to Know:**",
             "",
         ]
-        for rule in qref.get("core_rules_to_know", []):
+        for rule in _as_list(qref.get("core_rules_to_know", [])):
             lines.append(f"- {rule}")
         lines += [
             "",
-            f"**Combat Flow:** {qref.get('combat_flow', '')}",
+            f"**Combat Flow:** {_g(qref, 'combat_flow')}",
             "",
-            f"**Skill Checks:** {qref.get('skill_checks', '')}",
+            f"**Skill Checks:** {_g(qref, 'skill_checks')}",
             "",
             "**Session Tips:**",
             "",

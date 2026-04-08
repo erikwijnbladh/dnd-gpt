@@ -1,0 +1,7 @@
+.env
+/.next
+/__pycache__
+/node_modules
+*.lock
+/__pycache__
+*.pyc

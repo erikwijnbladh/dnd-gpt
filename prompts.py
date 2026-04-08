@@ -16,16 +16,33 @@ PLAN_QUESTIONS_PROMPT = """A first-time Dungeon Master has this campaign idea:
 
 "{idea}"
 
-Generate 6 clarifying questions you'd ask them before designing the campaign.
-These questions should help you understand: setting/world, tone/mood, player count and experience,
-campaign length, content preferences (dark themes, humor, romance, etc.), and any specific elements
-they want included or excluded.
+Your job is to figure out what is ALREADY CLEAR from the idea, and only ask about what is GENUINELY MISSING.
 
-Write every question in plain English. Assume the person has never played D&D before.
-If a question needs a concept explained, include a one-sentence explanation in parentheses.
+Step 1 — Extract what is already known:
+- Setting/world: is it described? (e.g. cosmic horror, dying world, fused flesh/machine = YES, clearly established)
+- Tone/mood: is it implied? (e.g. "screaming engine", "corrupting force" = dark/horror tone is obvious)
+- Story themes: any clear themes already?
+- Specific elements they clearly want included?
+
+Step 2 — Identify only the true gaps. Common gaps for a first-time DM:
+- How many people are playing (almost never in the idea)
+- How long they want the campaign to last (almost never in the idea)
+- Content limits or preferences (gore, humor, romance, etc.)
+- Any specific things they want included or excluded beyond what's in the idea
+
+Step 3 — Generate ONLY questions about the genuine gaps. Do NOT ask about anything already clear from the idea.
+- If the setting is obvious, do not ask about setting.
+- If the tone is obvious, do not ask about tone.
+- Typically 2-4 questions is right for a detailed idea. Only ask more if there are more real gaps.
+- Every question must be in plain English. No D&D jargon.
 
 Return JSON in this exact format:
 {{
+  "already_known": {{
+    "setting": "what you extracted about setting, or null",
+    "tone": "what you extracted about tone, or null",
+    "themes": "what you extracted about themes, or null"
+  }},
   "questions": [
     {{
       "id": "q1",
@@ -294,5 +311,75 @@ Return a JSON report:
   ],
   "strengths": ["strength1", "strength2"],
   "summary": "2-3 sentence overall assessment"
+}}
+"""
+
+HOW_TO_RUN_PROMPT = """You are writing the very first page of a D&D campaign book for a first-time Dungeon Master.
+This person has never run a game before. They just received a full campaign book and their first question is:
+"What do I actually DO with this? Where do I start?"
+
+Write them a clear, friendly, numbered guide. Use plain English only. No jargon unless you immediately explain it.
+Think of it like a friend who has run D&D a hundred times is sitting next to them explaining exactly what to do.
+
+Campaign details:
+Title: {campaign_title}
+Premise: {premise}
+Number of chapters: {chapter_count}
+Estimated sessions: {total_sessions}
+Player count: {player_count}
+Chapter list: {chapter_list}
+Major NPCs: {npc_list}
+
+Write the guide in this JSON format:
+{{
+  "before_session_1": {{
+    "title": "Before Your First Session",
+    "steps": [
+      "Step 1 text — concrete and specific to this campaign",
+      "Step 2 text",
+      "Step 3 text",
+      "Step 4 text",
+      "Step 5 text"
+    ],
+    "what_to_tell_your_players": "2-3 sentences to read or paraphrase to your players before session 1 to set the scene. No spoilers."
+  }},
+  "session_plan": [
+    {{
+      "session_number": 1,
+      "chapters_to_cover": ["Chapter 1: Title"],
+      "goal": "What should happen by the end of this session (1-2 sentences)",
+      "dm_focus": "The one thing to focus on as DM this session (1 sentence)"
+    }}
+  ],
+  "running_a_session": {{
+    "title": "How to Run a Session: The Basic Loop",
+    "intro": "One sentence explaining what a session is",
+    "steps": [
+      "Step 1: ...",
+      "Step 2: ...",
+      "Step 3: ...",
+      "Step 4: ...",
+      "Step 5: ..."
+    ]
+  }},
+  "when_players_go_off_script": {{
+    "title": "When Players Do Something Unexpected",
+    "rules": [
+      "Rule 1 — simple and reassuring",
+      "Rule 2",
+      "Rule 3"
+    ]
+  }},
+  "quick_reference_card": {{
+    "title": "Keep This Next to You While Playing",
+    "items": [
+      "Item 1 — a short fact or reminder specific to this campaign",
+      "Item 2",
+      "Item 3",
+      "Item 4",
+      "Item 5",
+      "Item 6"
+    ]
+  }}
 }}
 """
