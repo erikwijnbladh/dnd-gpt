@@ -1,0 +1,4 @@
+openai>=1.70.0
+rich>=13.9.0
+typer>=0.15.1
+python-dotenv>=1.1.0
