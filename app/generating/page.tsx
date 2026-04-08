@@ -5,40 +5,51 @@ import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '@/lib/store'
 import type { AgentState, Campaign, AgentEvent } from '@/lib/types'
+import AtmosphericLoader from '@/components/AtmosphericLoader'
 import clsx from 'clsx'
 
-const AGENT_TYPE_CONFIG = {
-  orchestrator: { color: 'text-gold', border: 'border-gold/40', bg: 'bg-gold/5', glow: 'shadow-[0_0_24px_#C9A84C22]', label: '🎲 Orchestrator' },
-  chapter:      { color: 'text-blue-400', border: 'border-blue-500/40', bg: 'bg-blue-500/5', glow: 'shadow-[0_0_24px_#3B7BE022]', label: '📖 Chapter' },
-  npc:          { color: 'text-emerald-400', border: 'border-emerald-500/40', bg: 'bg-emerald-500/5', glow: 'shadow-[0_0_24px_#2D9E6E22]', label: '🧙 NPC' },
-  appendix:     { color: 'text-purple-400', border: 'border-purple-500/40', bg: 'bg-purple-500/5', glow: 'shadow-[0_0_24px_#8B5CF622]', label: '📚 Appendix' },
-  guide:        { color: 'text-orange-400', border: 'border-orange-500/40', bg: 'bg-orange-500/5', glow: 'shadow-[0_0_24px_#E9731622]', label: '🗺️ DM Guide' },
-  qc:           { color: 'text-gold', border: 'border-gold/30', bg: 'bg-gold/5', glow: '', label: '🔍 Review' },
+// ── Config ───────────────────────────────────────────────────────────────────
+
+const TYPE_CFG: Record<string, { label: string; icon: string; color: string; dimColor: string }> = {
+  orchestrator: { label: 'Orchestrator', icon: '🎲', color: '#C9A84C', dimColor: '#C9A84C22' },
+  chapter:      { label: 'Chapter',      icon: '📖', color: '#60A5FA', dimColor: '#3B7BE022' },
+  npc:          { label: 'NPC',          icon: '🧙', color: '#34D399', dimColor: '#2D9E6E22' },
+  appendix:     { label: 'Appendix',     icon: '📚', color: '#A78BFA', dimColor: '#8B5CF622' },
+  guide:        { label: 'DM Guide',     icon: '🗺️', color: '#FB923C', dimColor: '#E9731622' },
+  qc:           { label: 'Review',       icon: '🔍', color: '#C9A84C', dimColor: '#C9A84C22' },
 }
 
-const STATUS_DOT = {
-  pending:   'bg-faint',
-  thinking:  'bg-gold animate-pulse',
-  writing:   'bg-gold',
-  reviewing: 'bg-gold animate-pulse',
-  complete:  'bg-emerald-400',
-  error:     'bg-crimson-bright',
+const STATUS_ICON: Record<string, string> = {
+  pending:   '○',
+  thinking:  '◐',
+  writing:   '●',
+  reviewing: '◑',
+  complete:  '✓',
+  error:     '✗',
 }
+
+// ── Main page ────────────────────────────────────────────────────────────────
 
 export default function GeneratingPage() {
   const router = useRouter()
   const { currentIdea, currentAnswers, saveCampaign } = useStore()
 
-  const [agents, setAgents] = useState<AgentState[]>([
-    { id: 'orchestrator', type: 'orchestrator', label: 'Orchestrator', status: 'pending', message: 'Waiting…' },
-  ])
+  const [agents, setAgents] = useState<AgentState[]>([])
+  const [orchestratorMsg, setOrchestratorMsg] = useState('Designing your campaign world…')
+  const [orchestratorDone, setOrchestratorDone] = useState(false)
+  const [campaignTitle, setCampaignTitle] = useState<string | null>(null)
+  const [campaignTagline, setCampaignTagline] = useState<string | null>(null)
+  const [agentsSpawned, setAgentsSpawned] = useState(false)
   const [done, setDone] = useState(false)
   const [campaignId, setCampaignId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
+
   const started = useRef(false)
   const startTime = useRef(Date.now())
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
+  // Track existing agent types so update events don't clobber them
+  const agentTypes = useRef<Record<string, AgentState['type']>>({})
 
   useEffect(() => {
     if (!currentIdea) { router.replace('/'); return }
@@ -56,7 +67,6 @@ export default function GeneratingPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ idea: currentIdea, answers: currentAnswers }),
         })
-
         if (!res.ok || !res.body) {
           setError('Generation failed. Check your API key and try again.')
           return
@@ -69,17 +79,12 @@ export default function GeneratingPage() {
         while (true) {
           const { done: streamDone, value } = await reader.read()
           if (streamDone) break
-
           buffer += decoder.decode(value, { stream: true })
           const lines = buffer.split('\n')
           buffer = lines.pop() ?? ''
-
           for (const line of lines) {
             if (!line.startsWith('data: ')) continue
-            try {
-              const event: AgentEvent = JSON.parse(line.slice(6))
-              handleEvent(event)
-            } catch { /* malformed */ }
+            try { handleEvent(JSON.parse(line.slice(6))) } catch { /* skip */ }
           }
         }
       } catch (e) {
@@ -92,13 +97,25 @@ export default function GeneratingPage() {
   }, [])
 
   const upsertAgent = (patch: Partial<AgentState> & { id: string }) => {
+    // Preserve existing type — update events don't carry agentType
+    if (patch.type) agentTypes.current[patch.id] = patch.type
+
     setAgents((prev) => {
       const idx = prev.findIndex((a) => a.id === patch.id)
       if (idx === -1) {
-        return [...prev, { type: 'chapter', label: patch.id, status: 'pending', message: '', ...patch } as AgentState]
+        const newAgent: AgentState = {
+          type: agentTypes.current[patch.id] ?? 'chapter',
+          label: patch.label ?? patch.id,
+          status: 'pending',
+          message: '',
+          ...patch,
+        }
+        return [...prev, newAgent]
       }
       const next = [...prev]
-      next[idx] = { ...next[idx], ...patch }
+      // Never overwrite type from an event that doesn't specify it
+      const resolvedType = patch.type ?? next[idx].type
+      next[idx] = { ...next[idx], ...patch, type: resolvedType }
       return next
     })
   }
@@ -106,18 +123,14 @@ export default function GeneratingPage() {
   const handleEvent = (event: AgentEvent) => {
     switch (event.type) {
       case 'status':
-      case 'agent_update':
-        upsertAgent({
-          id: event.agentId!,
-          type: event.agentType ?? 'chapter',
-          label: event.message ?? '',
-          status: (event.status as AgentState['status']) ?? 'thinking',
-          message: event.message ?? '',
-          preview: event.preview,
-        })
+        if (event.agentId === 'orchestrator') {
+          setOrchestratorMsg(event.message ?? '')
+        }
         break
 
       case 'agent_start':
+        if (event.agentId === 'orchestrator') break
+        setAgentsSpawned(true)
         upsertAgent({
           id: event.agentId!,
           type: event.agentType ?? 'chapter',
@@ -127,7 +140,28 @@ export default function GeneratingPage() {
         })
         break
 
+      case 'agent_update':
+        if (event.agentId === 'orchestrator') {
+          setOrchestratorMsg(event.message ?? '')
+          break
+        }
+        upsertAgent({
+          id: event.agentId!,
+          status: (event.status as AgentState['status']) ?? 'writing',
+          message: event.message ?? '',
+        })
+        break
+
       case 'agent_complete':
+        if (event.agentId === 'orchestrator') {
+          setOrchestratorDone(true)
+          setOrchestratorMsg(event.message ?? '')
+          // Extract title from message like '"Title" designed'
+          const match = event.message?.match(/"([^"]+)"/)
+          if (match) setCampaignTitle(match[1])
+          if (event.preview) setCampaignTagline(event.preview)
+          break
+        }
         upsertAgent({
           id: event.agentId!,
           status: 'complete',
@@ -136,11 +170,16 @@ export default function GeneratingPage() {
         })
         break
 
+      case 'fanout':
+        setAgentsSpawned(true)
+        break
+
       case 'complete':
         clearInterval(timerRef.current)
         if (event.campaign) {
           saveCampaign(event.campaign as Campaign)
           setCampaignId((event.campaign as Campaign).id)
+          if (!campaignTitle) setCampaignTitle((event.campaign as Campaign).skeleton?.title)
         }
         setDone(true)
         break
@@ -151,179 +190,264 @@ export default function GeneratingPage() {
     }
   }
 
-  const orchestrator = agents.find((a) => a.id === 'orchestrator')
   const subAgents = agents.filter((a) => a.id !== 'orchestrator')
-  const completedCount = agents.filter((a) => a.status === 'complete').length
-  const totalCount = agents.length
+  const chapters = subAgents.filter((a) => a.type === 'chapter')
+  const npcs = subAgents.filter((a) => a.type === 'npc')
+  const support = subAgents.filter((a) => a.type === 'appendix' || a.type === 'guide' || a.type === 'qc')
+  const completedCount = subAgents.filter((a) => a.status === 'complete').length
+  const totalCount = subAgents.length
+  const progressPct = totalCount > 0 ? (completedCount / totalCount) * 100 : 0
 
   return (
-    <main className="min-h-screen flex flex-col">
+    <main className="min-h-screen flex flex-col bg-bg">
       {/* Top bar */}
-      <div className="fixed top-0 left-0 right-0 z-50 border-b border-border bg-bg/80 backdrop-blur-sm">
+      <div className="fixed top-0 left-0 right-0 z-50 border-b border-border bg-bg/90 backdrop-blur-sm">
         <div className="flex items-center justify-between px-6 py-3">
           <div className="flex items-center gap-2">
             <span className="text-gold text-sm">⚔</span>
             <span className="font-ui text-sm text-muted">Campaign Forge</span>
           </div>
-          <div className="flex items-center gap-3">
-            {!done && !error && (
-              <span className="text-faint text-xs font-ui tabular-nums">{elapsed}s</span>
-            )}
-            <span className="text-muted text-xs font-ui">
-              {completedCount}/{totalCount} complete
-            </span>
+          <div className="flex items-center gap-4 text-xs font-ui text-faint tabular-nums">
+            {agentsSpawned && <span>{completedCount}/{totalCount} sections</span>}
+            <span>{elapsed}s</span>
           </div>
         </div>
-        {/* Progress bar */}
-        <div className="h-0.5 bg-border">
+        <div className="h-px bg-border">
           <motion.div
-            className="h-full bg-gradient-to-r from-gold to-gold-bright"
-            animate={{ width: `${totalCount > 0 ? (completedCount / totalCount) * 100 : 0}%` }}
-            transition={{ duration: 0.5, ease: 'easeOut' }}
+            className="h-full bg-gradient-to-r from-gold/60 to-gold"
+            animate={{ width: agentsSpawned ? `${progressPct}%` : '8%' }}
+            transition={{ duration: 0.8, ease: 'easeOut' }}
           />
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col items-center px-4 pt-24 pb-12 max-w-5xl mx-auto w-full">
-
-        {/* Error state */}
-        {error && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="text-center mt-12"
-          >
-            <div className="text-crimson-bright text-4xl mb-4">⚠</div>
+      {/* Error */}
+      {error && (
+        <div className="flex-1 flex items-center justify-center pt-16">
+          <div className="text-center">
+            <p className="text-4xl mb-4">⚠️</p>
             <p className="font-display text-xl text-text mb-2">Something went wrong</p>
-            <p className="text-muted font-ui text-sm mb-6 max-w-md">{error}</p>
-            <button
-              onClick={() => router.push('/')}
-              className="px-5 py-2.5 rounded-xl bg-gold text-bg font-ui font-medium hover:bg-gold-bright transition-colors"
-            >
+            <p className="text-muted font-ui text-sm mb-6 max-w-sm">{error}</p>
+            <button onClick={() => router.push('/')} className="px-5 py-2.5 rounded-xl bg-gold text-bg font-ui font-medium hover:bg-gold-bright transition-colors">
               Start over
             </button>
-          </motion.div>
-        )}
-
-        {/* Orchestrator node */}
-        {!error && orchestrator && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.5 }}
-            className="w-full max-w-sm mb-8"
-          >
-            <div
-              className={clsx(
-                'relative rounded-2xl border p-6 text-center transition-all duration-500',
-                orchestrator.status === 'complete' ? 'border-gold/40 shadow-[0_0_40px_#C9A84C22]' : 'border-gold/30 shadow-[0_0_24px_#C9A84C11]',
-              )}
-              style={{ background: 'linear-gradient(135deg, #141208 0%, #0E0C06 100%)' }}
-            >
-              {/* Spinning ring */}
-              {orchestrator.status !== 'complete' && (
-                <div className="absolute inset-0 rounded-2xl border border-gold/20 animate-spin-slow" />
-              )}
-
-              <div className="text-3xl mb-2">🎲</div>
-              <h2 className="font-display text-lg text-gold mb-1">Orchestrator</h2>
-              <p className="text-xs font-ui text-muted uppercase tracking-wider mb-3">gpt-5.4</p>
-
-              <div className="flex items-center justify-center gap-2">
-                <span className={clsx('w-2 h-2 rounded-full flex-shrink-0', STATUS_DOT[orchestrator.status])} />
-                <span className="text-sm font-ui text-text">{orchestrator.message}</span>
-              </div>
-
-              {orchestrator.preview && (
-                <p className="mt-3 text-xs font-ui text-muted italic border-t border-border pt-3">
-                  "{orchestrator.preview}"
-                </p>
-              )}
-            </div>
-          </motion.div>
-        )}
-
-        {/* Sub-agent grid */}
-        {!error && subAgents.length > 0 && (
-          <div className="w-full">
-            <p className="text-xs text-faint font-ui uppercase tracking-wider text-center mb-4">
-              Parallel agents
-            </p>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              <AnimatePresence>
-                {subAgents.map((agent, i) => {
-                  const cfg = AGENT_TYPE_CONFIG[agent.type] ?? AGENT_TYPE_CONFIG.chapter
-                  return (
-                    <motion.div
-                      key={agent.id}
-                      initial={{ opacity: 0, scale: 0.85, y: 12 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      transition={{ delay: i * 0.04, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                      className={clsx(
-                        'rounded-xl border p-4 transition-all duration-300',
-                        cfg.border, cfg.bg,
-                        agent.status === 'writing' || agent.status === 'thinking' ? cfg.glow : '',
-                      )}
-                    >
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className={clsx('w-1.5 h-1.5 rounded-full flex-shrink-0', STATUS_DOT[agent.status])} />
-                        <span className={clsx('text-xs font-ui font-medium truncate', cfg.color)}>
-                          {cfg.label}
-                        </span>
-                      </div>
-                      <p className="text-xs font-ui text-text leading-snug mb-1 line-clamp-2">
-                        {agent.message || agent.label}
-                      </p>
-                      {agent.preview && agent.status === 'complete' && (
-                        <p className="text-xs font-ui text-muted italic line-clamp-2 mt-1 pt-1 border-t border-border/50">
-                          {agent.preview}
-                        </p>
-                      )}
-                      {(agent.status === 'thinking' || agent.status === 'writing') && (
-                        <div className="flex gap-1 mt-2">
-                          {[0, 1, 2].map((j) => (
-                            <span
-                              key={j}
-                              className={clsx('w-1 h-1 rounded-full', cfg.color.replace('text-', 'bg-').replace('/40', ''))}
-                              style={{ animation: `blink 1.2s ease-in-out ${j * 0.2}s infinite` }}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </motion.div>
-                  )
-                })}
-              </AnimatePresence>
-            </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Done panel */}
-        <AnimatePresence>
-          {done && campaignId && (
+      {/* Phase 1: Atmospheric loader */}
+      <AnimatePresence>
+        {!error && !agentsSpawned && (
+          <motion.div
+            key="loader"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0, scale: 0.96 }}
+            transition={{ duration: 0.5 }}
+            className="flex-1 flex flex-col pt-16"
+          >
+            <AtmosphericLoader idea={currentIdea ?? ''} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Phase 2: Agent dashboard */}
+      <AnimatePresence>
+        {!error && agentsSpawned && (
+          <motion.div
+            key="dashboard"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.6 }}
+            className="flex-1 flex flex-col pt-16 px-4 md:px-8 pb-12 max-w-6xl mx-auto w-full"
+          >
+            {/* Campaign header */}
             <motion.div
-              initial={{ opacity: 0, y: 24, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-              className="w-full max-w-md mt-10 rounded-2xl border border-gold/40 p-8 text-center"
-              style={{ background: 'linear-gradient(135deg, #141208 0%, #0E0C06 100%)', boxShadow: '0 0 60px #C9A84C22' }}
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+              className="pt-6 pb-5 border-b border-border mb-6"
             >
-              <div className="text-4xl mb-3">📜</div>
-              <h2 className="font-display text-2xl text-gold mb-1">Campaign Ready</h2>
-              <p className="text-muted font-ui text-sm mb-2">Generated in {elapsed}s</p>
-              <p className="text-text font-ui text-sm mb-6">
-                {agents.filter((a) => a.status === 'complete').length} sections written by {agents.length} AI agents.
-              </p>
-              <button
-                onClick={() => router.push(`/campaign/${campaignId}`)}
-                className="w-full py-3 rounded-xl bg-gold text-bg font-ui font-semibold hover:bg-gold-bright active:scale-95 transition-all duration-200 text-sm"
-              >
-                Open Your Campaign Book →
-              </button>
+              {campaignTitle ? (
+                <div>
+                  <h1 className="font-display text-2xl md:text-3xl text-gold">{campaignTitle}</h1>
+                  {campaignTagline && (
+                    <p className="text-muted font-ui text-sm italic mt-1">{campaignTagline}</p>
+                  )}
+                </div>
+              ) : (
+                <div className="h-8 w-64 rounded bg-surface animate-pulse" />
+              )}
+              <div className="flex items-center gap-2 mt-3">
+                <span className={clsx(
+                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-ui border',
+                  orchestratorDone
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                    : 'bg-gold/10 border-gold/30 text-gold'
+                )}>
+                  <span className={orchestratorDone ? '' : 'animate-pulse'}>
+                    {orchestratorDone ? '✓' : '◐'}
+                  </span>
+                  {orchestratorMsg}
+                </span>
+              </div>
             </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+
+            {/* Two-column layout */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+              {/* Chapters — left, 2/3 width */}
+              {chapters.length > 0 && (
+                <div className="lg:col-span-2">
+                  <SectionHeader icon="📖" label="Chapters" color="#60A5FA" count={chapters.filter(a => a.status === 'complete').length} total={chapters.length} />
+                  <div className="space-y-2 mt-3">
+                    {chapters.map((agent, i) => (
+                      <AgentRow key={agent.id} agent={agent} index={i} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Right column: NPCs + support */}
+              <div className="space-y-6">
+                {npcs.length > 0 && (
+                  <div>
+                    <SectionHeader icon="🧙" label="NPCs" color="#34D399" count={npcs.filter(a => a.status === 'complete').length} total={npcs.length} />
+                    <div className="space-y-2 mt-3">
+                      {npcs.map((agent, i) => (
+                        <AgentRow key={agent.id} agent={agent} index={i} compact />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {support.length > 0 && (
+                  <div>
+                    <SectionHeader icon="✦" label="Finishing" color="#C9A84C" count={support.filter(a => a.status === 'complete').length} total={support.length} />
+                    <div className="space-y-2 mt-3">
+                      {support.map((agent, i) => (
+                        <AgentRow key={agent.id} agent={agent} index={i} compact />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Done panel */}
+            <AnimatePresence>
+              {done && campaignId && (
+                <motion.div
+                  initial={{ opacity: 0, y: 24 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+                  className="mt-10 rounded-2xl border border-gold/40 p-8 text-center"
+                  style={{ background: 'linear-gradient(135deg, #141208 0%, #0E0C06 100%)', boxShadow: '0 0 60px #C9A84C1A' }}
+                >
+                  <div className="text-4xl mb-3">📜</div>
+                  <h2 className="font-display text-2xl text-gold mb-1">{campaignTitle} is ready</h2>
+                  <p className="text-muted font-ui text-sm mb-6">
+                    {totalCount} sections written in {elapsed}s
+                  </p>
+                  <button
+                    onClick={() => router.push(`/campaign/${campaignId}`)}
+                    className="px-8 py-3 rounded-xl bg-gold text-bg font-ui font-semibold hover:bg-gold-bright active:scale-95 transition-all duration-200"
+                  >
+                    Open Campaign Book →
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </main>
+  )
+}
+
+// ── Sub-components ───────────────────────────────────────────────────────────
+
+function SectionHeader({ icon, label, color, count, total }: {
+  icon: string; label: string; color: string; count: number; total: number
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-base">{icon}</span>
+      <span className="font-display text-sm tracking-wide" style={{ color }}>{label}</span>
+      <span className="text-xs font-ui text-faint ml-auto">{count}/{total}</span>
+      <div className="w-16 h-1 rounded-full bg-border overflow-hidden">
+        <motion.div
+          className="h-full rounded-full"
+          style={{ background: color }}
+          animate={{ width: total > 0 ? `${(count / total) * 100}%` : '0%' }}
+          transition={{ duration: 0.4 }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function AgentRow({ agent, index, compact = false }: {
+  agent: AgentState; index: number; compact?: boolean
+}) {
+  const cfg = TYPE_CFG[agent.type] ?? TYPE_CFG.chapter
+  const isDone = agent.status === 'complete'
+  const isActive = agent.status === 'writing' || agent.status === 'thinking' || agent.status === 'reviewing'
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: index * 0.04, duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+      className={clsx(
+        'rounded-xl border px-4 py-3 transition-all duration-300',
+        isDone ? 'border-border bg-surface/50' : '',
+        isActive ? 'bg-surface' : 'bg-surface/30',
+      )}
+      style={{
+        borderColor: isActive ? cfg.color + '44' : isDone ? '' : '#1C2030',
+        boxShadow: isActive ? `0 0 16px ${cfg.dimColor}` : 'none',
+      }}
+    >
+      <div className="flex items-start gap-3">
+        {/* Status indicator */}
+        <span
+          className={clsx('font-ui text-sm mt-0.5 flex-shrink-0 w-4 text-center transition-colors', isActive && 'animate-pulse')}
+          style={{ color: isDone ? '#34D399' : isActive ? cfg.color : '#3D4155' }}
+        >
+          {STATUS_ICON[agent.status] ?? '○'}
+        </span>
+
+        <div className="min-w-0 flex-1">
+          {/* Label */}
+          <p className={clsx(
+            'font-ui text-sm font-medium leading-snug truncate',
+            isDone ? 'text-text' : isActive ? 'text-text' : 'text-muted'
+          )}>
+            {agent.label || agent.message}
+          </p>
+
+          {/* Preview — only when done, only for non-compact */}
+          {!compact && isDone && agent.preview && (
+            <p className="text-xs font-ui text-faint mt-1 leading-relaxed line-clamp-2 italic">
+              {agent.preview}
+            </p>
+          )}
+
+          {/* Writing indicator */}
+          {isActive && (
+            <div className="flex gap-1 mt-1.5">
+              {[0, 1, 2].map((j) => (
+                <motion.span
+                  key={j}
+                  className="w-1 h-1 rounded-full"
+                  style={{ background: cfg.color }}
+                  animate={{ opacity: [0.3, 1, 0.3] }}
+                  transition={{ duration: 1.2, delay: j * 0.2, repeat: Infinity }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.div>
   )
 }

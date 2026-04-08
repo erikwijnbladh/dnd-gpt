@@ -4,11 +4,12 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '@/lib/store'
+import { createClient } from '@/lib/supabase/client'
 import type { Campaign, Chapter, NPC } from '@/lib/types'
 import clsx from 'clsx'
-import { BookOpen, Users, Map, List, ChevronRight, ChevronLeft, Menu, X, ExternalLink } from 'lucide-react'
+import { ChevronRight, ChevronLeft, Menu, X } from 'lucide-react'
 
-type Section = 'how-to-run' | 'intro' | string // chapter id or 'npcs' or 'appendix'
+type Section = 'how-to-run' | 'intro' | string
 
 export default function CampaignPage() {
   const { id } = useParams<{ id: string }>()
@@ -20,9 +21,32 @@ export default function CampaignPage() {
   const mainRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const c = getCampaign(id)
-    if (!c) { router.replace('/'); return }
-    setCampaign(c)
+    // Try local store first (just generated), then fall back to Supabase
+    const local = getCampaign(id)
+    if (local) { setCampaign(local); return }
+
+    const supabase = createClient()
+    supabase
+      .from('campaigns')
+      .select('*')
+      .eq('id', id)
+      .single()
+      .then(({ data, error }) => {
+        if (error || !data) { router.replace('/'); return }
+        // Reconstruct campaign shape from flat DB row
+        setCampaign({
+          id: data.id,
+          idea: data.idea,
+          answers: data.answers,
+          generatedAt: data.created_at,
+          skeleton: data.skeleton,
+          chapters: data.chapters,
+          npcs: data.npcs,
+          appendix: data.appendix,
+          how_to_run: data.how_to_run,
+          quality_check: data.quality_check,
+        } as Campaign)
+      })
   }, [id])
 
   if (!campaign) return null

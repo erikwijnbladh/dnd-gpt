@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
 import { v4 as uuidv4 } from 'uuid'
+import { createClient } from '@/lib/supabase/server'
 import {
   SYSTEM_ORCHESTRATOR,
   skeletonPrompt,
@@ -219,9 +220,13 @@ export async function POST(req: NextRequest) {
         const quality_check = parseJson(qcRes.choices[0].message.content ?? '{}')
         send({ type: 'agent_complete', agentId: 'qc', status: 'complete', message: `Quality: ${quality_check.overall_quality}` })
 
-        // ── 4. Done ──────────────────────────────────────────────────
+        // ── 4. Save to Supabase ──────────────────────────────────────
+        const supabase = await createClient()
+        const { data: { user } } = await supabase.auth.getUser()
+
+        const campaignId = uuidv4()
         const campaign = {
-          id: uuidv4(),
+          id: campaignId,
           idea,
           answers: answers ?? {},
           generatedAt: new Date().toISOString(),
@@ -231,6 +236,24 @@ export async function POST(req: NextRequest) {
           appendix,
           how_to_run,
           quality_check,
+        }
+
+        if (user) {
+          const { error: dbError } = await supabase.from('campaigns').insert({
+            id: campaignId,
+            user_id: user.id,
+            title: skeleton.title,
+            tagline: skeleton.tagline,
+            idea,
+            answers: answers ?? {},
+            skeleton,
+            chapters,
+            npcs,
+            appendix,
+            how_to_run,
+            quality_check,
+          })
+          if (dbError) console.error('Failed to save campaign:', dbError)
         }
 
         send({ type: 'complete', campaign })
