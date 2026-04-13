@@ -101,14 +101,19 @@ export function chapterPrompt(
   campaignTitle: string,
   premise: string,
   threeAct: object,
-  chapter: { id: string; number: number; title: string; synopsis: string; key_moments: string[] }
+  chapter: { id: string; number: number; title: string; synopsis: string; key_moments: string[] },
+  completedChapters: { chapter_id: string; scene_setting: string; what_happens_next: string }[] = []
 ) {
+  const priorContext = completedChapters.length > 0
+    ? `\nPRIOR CHAPTERS (for narrative continuity):\n${completedChapters.map((c, i) => `Chapter ${i + 1} — Scene: ${c.scene_setting?.slice(0, 200)}… | Leads into: ${c.what_happens_next}`).join('\n')}\n`
+    : ''
+
   return `Write the full content for this D&D campaign chapter.
 
 CAMPAIGN: ${campaignTitle}
 PREMISE: ${premise}
 THREE ACT: ${JSON.stringify(threeAct)}
-
+${priorContext}
 CHAPTER:
 Number: ${chapter.number}
 Title: ${chapter.title}

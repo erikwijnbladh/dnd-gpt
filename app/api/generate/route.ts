@@ -11,6 +11,7 @@ import {
   howToRunPrompt,
   qualityCheckPrompt,
 } from '@/lib/prompts'
+import { generateChaptersSequentially } from '@/lib/generation'
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const ORCHESTRATOR_MODEL = process.env.ORCHESTRATOR_MODEL ?? 'gpt-5.4'
@@ -126,22 +127,29 @@ export async function POST(req: NextRequest) {
         send({ type: 'agent_start', agentId: 'appendix', agentType: 'appendix', message: 'Appendix', status: 'thinking' })
         send({ type: 'agent_start', agentId: 'how_to_run', agentType: 'guide', message: 'DM Guide', status: 'thinking' })
 
-        // ── 2. Parallel sub-agents ───────────────────────────────────
-        const chapterTasks = (skeleton.chapters ?? []).map(async (ch: Record<string, unknown>) => {
-          send({ type: 'agent_update', agentId: `chapter_${ch.id}`, status: 'writing', message: `Writing ${ch.title}…` })
-          const res = await client.chat.completions.create({
-            model: AGENT_MODEL,
-            messages: [
-              { role: 'system', content: SYSTEM_ORCHESTRATOR },
-              { role: 'user', content: chapterPrompt(skeleton.title, skeleton.premise, skeleton.three_act_structure, ch as any) },
-            ],
-            temperature: 0.85,
-            response_format: { type: 'json_object' },
-          })
-          const result = parseJson(res.choices[0].message.content ?? '{}')
-          send({ type: 'agent_complete', agentId: `chapter_${ch.id}`, status: 'complete', message: `✓ ${ch.title}`, preview: result.scene_setting?.slice(0, 120) + '…' })
-          return result
-        })
+        // ── 2. Sub-agents ────────────────────────────────────────────
+        // Chapters run sequentially so each one receives prior chapter context
+        const chapters = await generateChaptersSequentially(
+          skeleton.title,
+          skeleton.premise,
+          skeleton.three_act_structure,
+          skeleton.chapters ?? [],
+          async (ch, prompt) => {
+            send({ type: 'agent_update', agentId: `chapter_${ch.id}`, status: 'writing', message: `Writing ${ch.title}…` })
+            const res = await client.chat.completions.create({
+              model: AGENT_MODEL,
+              messages: [
+                { role: 'system', content: SYSTEM_ORCHESTRATOR },
+                { role: 'user', content: prompt },
+              ],
+              temperature: 0.85,
+              response_format: { type: 'json_object' },
+            })
+            const result = parseJson(res.choices[0].message.content ?? '{}')
+            send({ type: 'agent_complete', agentId: `chapter_${ch.id}`, status: 'complete', message: `✓ ${ch.title}`, preview: result.scene_setting?.slice(0, 120) + '…' })
+            return result
+          }
+        )
 
         const npcTasks = (skeleton.npcs ?? []).map(async (npc: Record<string, unknown>) => {
           send({ type: 'agent_update', agentId: `npc_${npc.id}`, status: 'writing', message: `Creating ${npc.name}…` })
@@ -196,8 +204,7 @@ export async function POST(req: NextRequest) {
           return result
         }
 
-        const [chapters, npcs, appendix, how_to_run] = await Promise.all([
-          Promise.all(chapterTasks),
+        const [npcs, appendix, how_to_run] = await Promise.all([
           Promise.all(npcTasks),
           appendixTask(),
           howToRunTask(),
