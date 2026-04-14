@@ -7,7 +7,7 @@ Describe your idea, answer a few questions, and get a complete campaign book —
 ## Stack
 
 - **Next.js 15** — App Router, React 19
-- **OpenAI** — orchestrator + parallel writer agents
+- **Anthropic Claude** — orchestrator + parallel writer agents (Opus for design, Sonnet for writing, Haiku for reference content)
 - **Supabase** — auth & campaign storage
 - **Zustand** — client state
 - **Tailwind CSS + Framer Motion** — UI
@@ -68,7 +68,12 @@ Open [http://localhost:3000](http://localhost:3000).
 ## Environment Variables
 
 ```
-OPENAI_API_KEY=
+ANTHROPIC_API_KEY=          # console.anthropic.com
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
+
+# Optional model overrides
+ORCHESTRATOR_MODEL=claude-opus-4-6        # skeleton design + quality check
+AGENT_MODEL=claude-sonnet-4-6             # chapter + NPC writers (parallel)
+NANO_MODEL=claude-haiku-4-5-20251001      # appendix + DM guide
 ```

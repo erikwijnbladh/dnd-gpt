@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import OpenAI from 'openai'
+import Anthropic from '@anthropic-ai/sdk'
 import { SYSTEM_PLANNER, planQuestionsPrompt } from '@/lib/prompts'
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-const ORCHESTRATOR_MODEL = process.env.ORCHESTRATOR_MODEL ?? 'gpt-5.4'
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const ORCHESTRATOR_MODEL = process.env.ORCHESTRATOR_MODEL ?? 'claude-opus-4-6'
+
+const OUTPUT_TOOL: Anthropic.Tool = {
+  name: 'output',
+  description: 'Return the structured plan data exactly as specified in the prompt.',
+  input_schema: { type: 'object', additionalProperties: true },
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,18 +18,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Idea is required' }, { status: 400 })
     }
 
-    const response = await client.chat.completions.create({
+    const response = await client.messages.create({
       model: ORCHESTRATOR_MODEL,
-      messages: [
-        { role: 'system', content: SYSTEM_PLANNER },
-        { role: 'user', content: planQuestionsPrompt(idea) },
-      ],
-      temperature: 0.7,
-      response_format: { type: 'json_object' },
+      max_tokens: 1024,
+      system: SYSTEM_PLANNER,
+      messages: [{ role: 'user', content: planQuestionsPrompt(idea) }],
+      tools: [OUTPUT_TOOL],
+      tool_choice: { type: 'tool', name: 'output' },
     })
 
-    const data = JSON.parse(response.choices[0].message.content ?? '{}')
-    return NextResponse.json(data)
+    const block = response.content.find((b) => b.type === 'tool_use')
+    if (!block || block.type !== 'tool_use') {
+      return NextResponse.json({ error: 'No structured response from Claude' }, { status: 500 })
+    }
+
+    return NextResponse.json(block.input)
   } catch (err) {
     console.error('/api/plan error:', err)
     return NextResponse.json({ error: 'Failed to generate questions' }, { status: 500 })

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import OpenAI from 'openai'
+import Anthropic from '@anthropic-ai/sdk'
 import { v4 as uuidv4 } from 'uuid'
 import { createClient } from '@/lib/supabase/server'
 import {
@@ -12,14 +12,37 @@ import {
   qualityCheckPrompt,
 } from '@/lib/prompts'
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-const ORCHESTRATOR_MODEL = process.env.ORCHESTRATOR_MODEL ?? 'gpt-5.4'
-const AGENT_MODEL = process.env.AGENT_MODEL ?? 'gpt-5.4-mini'
-const NANO_MODEL = process.env.NANO_MODEL ?? 'gpt-5.4-nano'
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-function parseJson(text: string) {
-  const t = text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-  return JSON.parse(t)
+const ORCHESTRATOR_MODEL = process.env.ORCHESTRATOR_MODEL ?? 'claude-opus-4-6'
+const AGENT_MODEL        = process.env.AGENT_MODEL        ?? 'claude-sonnet-4-6'
+const NANO_MODEL         = process.env.NANO_MODEL         ?? 'claude-haiku-4-5-20251001'
+
+// Minimal tool schema — the prompts define the exact JSON shape;
+// forcing tool use guarantees we always get a parsed object back (no markdown fences to strip)
+const OUTPUT_TOOL: Anthropic.Tool = {
+  name: 'output',
+  description: 'Return the structured campaign data exactly as specified in the prompt.',
+  input_schema: { type: 'object', additionalProperties: true },
+}
+
+async function callClaude(
+  model: string,
+  system: string,
+  prompt: string,
+  maxTokens = 4096,
+): Promise<Record<string, unknown>> {
+  const response = await client.messages.create({
+    model,
+    max_tokens: maxTokens,
+    system,
+    messages: [{ role: 'user', content: prompt }],
+    tools: [OUTPUT_TOOL],
+    tool_choice: { type: 'tool', name: 'output' },
+  })
+  const block = response.content.find((b) => b.type === 'tool_use')
+  if (!block || block.type !== 'tool_use') throw new Error('No tool_use block in Claude response')
+  return block.input as Record<string, unknown>
 }
 
 function normalizeList(val: unknown, keys: string[]): object[] {
@@ -36,10 +59,10 @@ function normalizeList(val: unknown, keys: string[]): object[] {
 }
 
 function normalizeAppendix(a: Record<string, unknown>) {
-  a.glossary = normalizeList(a.glossary, ['term', 'definition'])
-  a.locations = normalizeList(a.locations, ['name', 'description'])
+  a.glossary    = normalizeList(a.glossary,    ['term', 'definition'])
+  a.locations   = normalizeList(a.locations,   ['name', 'description'])
   a.magic_items = normalizeList(a.magic_items, ['name', 'description'])
-  a.monsters = normalizeList(a.monsters, ['name', 'description'])
+  a.monsters    = normalizeList(a.monsters,    ['name', 'description'])
   return a
 }
 
@@ -71,7 +94,6 @@ function inferSessionCount(answers: Record<string, string>): { players: number; 
 
 export async function POST(req: NextRequest) {
   const { idea, answers } = await req.json()
-
   const encoder = new TextEncoder()
 
   const stream = new ReadableStream({
@@ -87,16 +109,12 @@ export async function POST(req: NextRequest) {
         send({ type: 'status', agentId: 'orchestrator', agentType: 'orchestrator', status: 'thinking', message: 'Designing your campaign world…' })
 
         const { players, sessions } = inferSessionCount(answers ?? {})
-        const skeletonRes = await client.chat.completions.create({
-          model: ORCHESTRATOR_MODEL,
-          messages: [
-            { role: 'system', content: SYSTEM_ORCHESTRATOR },
-            { role: 'user', content: skeletonPrompt(idea, answers ?? {}, players, sessions) },
-          ],
-          temperature: 0.8,
-          response_format: { type: 'json_object' },
-        })
-        const skeleton = parseJson(skeletonRes.choices[0].message.content ?? '{}')
+        const skeleton = await callClaude(
+          ORCHESTRATOR_MODEL,
+          SYSTEM_ORCHESTRATOR,
+          skeletonPrompt(idea, answers ?? {}, players, sessions),
+          4096,
+        )
 
         send({
           type: 'agent_complete',
@@ -107,8 +125,8 @@ export async function POST(req: NextRequest) {
         })
 
         // Announce fanout
-        const chapterCount = skeleton.chapters?.length ?? 0
-        const npcCount = skeleton.npcs?.length ?? 0
+        const chapterCount = (skeleton.chapters as unknown[])?.length ?? 0
+        const npcCount     = (skeleton.npcs    as unknown[])?.length ?? 0
         send({
           type: 'fanout',
           agentId: 'fanout',
@@ -116,82 +134,73 @@ export async function POST(req: NextRequest) {
           message: `Spawning ${chapterCount} chapter agents + ${npcCount} NPC agents…`,
         })
 
-        // Pre-announce all agents so UI can render them immediately
-        for (const ch of skeleton.chapters ?? []) {
+        // Pre-announce agents so UI renders them immediately
+        for (const ch of (skeleton.chapters as any[]) ?? []) {
           send({ type: 'agent_start', agentId: `chapter_${ch.id}`, agentType: 'chapter', message: ch.title, status: 'thinking' })
         }
-        for (const npc of skeleton.npcs ?? []) {
+        for (const npc of (skeleton.npcs as any[]) ?? []) {
           send({ type: 'agent_start', agentId: `npc_${npc.id}`, agentType: 'npc', message: npc.name, status: 'thinking' })
         }
-        send({ type: 'agent_start', agentId: 'appendix', agentType: 'appendix', message: 'Appendix', status: 'thinking' })
-        send({ type: 'agent_start', agentId: 'how_to_run', agentType: 'guide', message: 'DM Guide', status: 'thinking' })
+        send({ type: 'agent_start', agentId: 'appendix',   agentType: 'appendix', message: 'Appendix', status: 'thinking' })
+        send({ type: 'agent_start', agentId: 'how_to_run', agentType: 'guide',    message: 'DM Guide', status: 'thinking' })
 
         // ── 2. Parallel sub-agents ───────────────────────────────────
-        const chapterTasks = (skeleton.chapters ?? []).map(async (ch: Record<string, unknown>) => {
+        const chapterTasks = ((skeleton.chapters as any[]) ?? []).map(async (ch) => {
           send({ type: 'agent_update', agentId: `chapter_${ch.id}`, status: 'writing', message: `Writing ${ch.title}…` })
-          const res = await client.chat.completions.create({
-            model: AGENT_MODEL,
-            messages: [
-              { role: 'system', content: SYSTEM_ORCHESTRATOR },
-              { role: 'user', content: chapterPrompt(skeleton.title, skeleton.premise, skeleton.three_act_structure, ch as any) },
-            ],
-            temperature: 0.85,
-            response_format: { type: 'json_object' },
-          })
-          const result = parseJson(res.choices[0].message.content ?? '{}')
-          send({ type: 'agent_complete', agentId: `chapter_${ch.id}`, status: 'complete', message: `✓ ${ch.title}`, preview: result.scene_setting?.slice(0, 120) + '…' })
+          const result = await callClaude(
+            AGENT_MODEL,
+            SYSTEM_ORCHESTRATOR,
+            chapterPrompt(skeleton.title as string, skeleton.premise as string, skeleton.three_act_structure as object, ch),
+            4096,
+          )
+          send({ type: 'agent_complete', agentId: `chapter_${ch.id}`, status: 'complete', message: `✓ ${ch.title}`, preview: (result.scene_setting as string)?.slice(0, 120) + '…' })
           return result
         })
 
-        const npcTasks = (skeleton.npcs ?? []).map(async (npc: Record<string, unknown>) => {
+        const npcTasks = ((skeleton.npcs as any[]) ?? []).map(async (npc) => {
           send({ type: 'agent_update', agentId: `npc_${npc.id}`, status: 'writing', message: `Creating ${npc.name}…` })
-          const res = await client.chat.completions.create({
-            model: AGENT_MODEL,
-            messages: [
-              { role: 'system', content: SYSTEM_ORCHESTRATOR },
-              { role: 'user', content: npcPrompt(skeleton.title, skeleton.premise, skeleton.setting, npc as any) },
-            ],
-            temperature: 0.85,
-            response_format: { type: 'json_object' },
-          })
-          const result = normalizeNpc(parseJson(res.choices[0].message.content ?? '{}')) as Record<string, unknown>
-          const preview = typeof result.appearance === 'string' ? result.appearance.slice(0, 100) + '…' : undefined
-          send({ type: 'agent_complete', agentId: `npc_${npc.id}`, status: 'complete', message: `✓ ${npc.name}`, preview })
+          const result = normalizeNpc(await callClaude(
+            AGENT_MODEL,
+            SYSTEM_ORCHESTRATOR,
+            npcPrompt(skeleton.title as string, skeleton.premise as string, skeleton.setting as object, npc),
+            2048,
+          ))
+          send({ type: 'agent_complete', agentId: `npc_${npc.id}`, status: 'complete', message: `✓ ${npc.name}`, preview: (result.appearance as string)?.slice(0, 100) + '…' })
           return result
         })
 
         const appendixTask = async () => {
           send({ type: 'agent_update', agentId: 'appendix', status: 'writing', message: 'Compiling appendix…' })
-          const chStr = (skeleton.chapters ?? []).map((c: any) => `Ch${c.number}: ${c.title}`).join('; ')
-          const nStr = (skeleton.npcs ?? []).map((n: any) => `${n.name} (${n.role})`).join('; ')
-          const res = await client.chat.completions.create({
-            model: NANO_MODEL,
-            messages: [
-              { role: 'system', content: SYSTEM_ORCHESTRATOR },
-              { role: 'user', content: appendixPrompt(skeleton.title, skeleton.premise, chStr, nStr) },
-            ],
-            temperature: 0.7,
-            response_format: { type: 'json_object' },
-          })
-          const result = normalizeAppendix(parseJson(res.choices[0].message.content ?? '{}'))
+          const chStr = ((skeleton.chapters as any[]) ?? []).map((c) => `Ch${c.number}: ${c.title}`).join('; ')
+          const nStr  = ((skeleton.npcs    as any[]) ?? []).map((n) => `${n.name} (${n.role})`).join('; ')
+          const result = normalizeAppendix(await callClaude(
+            NANO_MODEL,
+            SYSTEM_ORCHESTRATOR,
+            appendixPrompt(skeleton.title as string, skeleton.premise as string, chStr, nStr),
+            4096,
+          ))
           send({ type: 'agent_complete', agentId: 'appendix', status: 'complete', message: '✓ Appendix compiled' })
           return result
         }
 
         const howToRunTask = async () => {
           send({ type: 'agent_update', agentId: 'how_to_run', status: 'writing', message: 'Writing DM guide…' })
-          const chList = (skeleton.chapters ?? []).map((c: any) => `Chapter ${c.number}: ${c.title}`).join('; ')
-          const nList = (skeleton.npcs ?? []).map((n: any) => n.name).join(', ')
-          const res = await client.chat.completions.create({
-            model: NANO_MODEL,
-            messages: [
-              { role: 'system', content: SYSTEM_ORCHESTRATOR },
-              { role: 'user', content: howToRunPrompt(skeleton.title, skeleton.premise, skeleton.chapters?.length ?? 0, skeleton.total_sessions ?? 6, skeleton.player_count ?? 4, chList, nList) },
-            ],
-            temperature: 0.5,
-            response_format: { type: 'json_object' },
-          })
-          const result = parseJson(res.choices[0].message.content ?? '{}')
+          const chList = ((skeleton.chapters as any[]) ?? []).map((c) => `Chapter ${c.number}: ${c.title}`).join('; ')
+          const nList  = ((skeleton.npcs    as any[]) ?? []).map((n) => n.name).join(', ')
+          const result = await callClaude(
+            NANO_MODEL,
+            SYSTEM_ORCHESTRATOR,
+            howToRunPrompt(
+              skeleton.title as string,
+              skeleton.premise as string,
+              (skeleton.chapters as any[])?.length ?? 0,
+              (skeleton.total_sessions as number) ?? 6,
+              (skeleton.player_count  as number) ?? 4,
+              chList,
+              nList,
+            ),
+            2048,
+          )
           send({ type: 'agent_complete', agentId: 'how_to_run', status: 'complete', message: '✓ DM guide ready' })
           return result
         }
@@ -204,20 +213,16 @@ export async function POST(req: NextRequest) {
         ] as const)
 
         // ── 3. Quality check ─────────────────────────────────────────
-        send({ type: 'agent_start', agentId: 'qc', agentType: 'qc', status: 'reviewing', message: 'Quality check…' })
-        send({ type: 'agent_update', agentId: 'orchestrator', status: 'reviewing', message: 'Reviewing for coherence…' })
+        send({ type: 'agent_start',  agentId: 'qc',          agentType: 'qc', status: 'reviewing', message: 'Quality check…' })
+        send({ type: 'agent_update', agentId: 'orchestrator',                  status: 'reviewing', message: 'Reviewing for coherence…' })
 
-        const chSummaries = (skeleton.chapters ?? []).map((c: any) => `Ch${c.number}: ${c.title}`).join('; ')
-        const qcRes = await client.chat.completions.create({
-          model: ORCHESTRATOR_MODEL,
-          messages: [
-            { role: 'system', content: SYSTEM_ORCHESTRATOR },
-            { role: 'user', content: qualityCheckPrompt(skeleton.title, chSummaries) },
-          ],
-          temperature: 0.3,
-          response_format: { type: 'json_object' },
-        })
-        const quality_check = parseJson(qcRes.choices[0].message.content ?? '{}')
+        const chSummaries = ((skeleton.chapters as any[]) ?? []).map((c) => `Ch${c.number}: ${c.title}`).join('; ')
+        const quality_check = await callClaude(
+          ORCHESTRATOR_MODEL,
+          SYSTEM_ORCHESTRATOR,
+          qualityCheckPrompt(skeleton.title as string, chSummaries),
+          1024,
+        )
         send({ type: 'agent_complete', agentId: 'qc', status: 'complete', message: `Quality: ${quality_check.overall_quality}` })
 
         // ── 4. Save to Supabase ──────────────────────────────────────
