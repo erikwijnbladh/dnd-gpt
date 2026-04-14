@@ -8,3 +8,5 @@
 .env.local
 /__pycache__
 package-lock.json
+/.claude
+*.tsbuildinfo

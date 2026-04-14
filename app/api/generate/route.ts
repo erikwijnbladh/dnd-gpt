@@ -5,13 +5,16 @@ import { createClient } from "@/lib/supabase/server";
 import {
   SYSTEM_ORCHESTRATOR,
   skeletonPrompt,
-  chapterPrompt,
   npcPrompt,
   appendixPrompt,
   howToRunPrompt,
   qualityCheckPrompt,
 } from "@/lib/prompts";
-import { generateChaptersSequentially } from "@/lib/generation";
+import {
+  generateChaptersSequentially,
+  type ChapterSkeleton,
+  type CompletedChapter,
+} from "@/lib/generation";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -194,36 +197,39 @@ export async function POST(req: NextRequest) {
           status: "thinking",
         });
 
-        // ── 2. Parallel sub-agents ───────────────────────────────────
-        const chapterTasks = ((skeleton.chapters as any[]) ?? []).map(
-          async (ch) => {
-            send({
-              type: "agent_update",
-              agentId: `chapter_${ch.id}`,
-              status: "writing",
-              message: `Writing ${ch.title}…`,
-            });
-            const result = await callClaude(
-              AGENT_MODEL,
-              SYSTEM_ORCHESTRATOR,
-              chapterPrompt(
-                skeleton.title as string,
-                skeleton.premise as string,
-                skeleton.three_act_structure as object,
-                ch,
-              ),
-              4096,
-            );
-            send({
-              type: "agent_complete",
-              agentId: `chapter_${ch.id}`,
-              status: "complete",
-              message: `✓ ${ch.title}`,
-              preview: (result.scene_setting as string)?.slice(0, 120) + "…",
-            });
-            return result;
-          },
-        );
+        // ── 2. Sequential chapters + parallel NPCs / appendix / guide ──
+        // Chapters run one-at-a-time so each gets narrative context from prior chapters.
+        // NPCs, appendix, and guide run in parallel alongside them.
+        const chapterTask = () =>
+          generateChaptersSequentially(
+            skeleton.title as string,
+            skeleton.premise as string,
+            skeleton.three_act_structure as object,
+            (skeleton.chapters as ChapterSkeleton[]) ?? [],
+            async (ch, prompt) => {
+              send({
+                type: "agent_update",
+                agentId: `chapter_${ch.id}`,
+                status: "writing",
+                message: `Writing ${ch.title}…`,
+              });
+              const result = await callClaude(
+                AGENT_MODEL,
+                SYSTEM_ORCHESTRATOR,
+                prompt,
+                4096,
+              );
+              send({
+                type: "agent_complete",
+                agentId: `chapter_${ch.id}`,
+                status: "complete",
+                message: `✓ ${ch.title}`,
+                preview:
+                  (result.scene_setting as string)?.slice(0, 120) + "…",
+              });
+              return result as CompletedChapter;
+            },
+          );
 
         const npcTasks = ((skeleton.npcs as any[]) ?? []).map(async (npc) => {
           send({
@@ -326,7 +332,8 @@ export async function POST(req: NextRequest) {
           return result;
         };
 
-        const [npcs, appendix, how_to_run] = await Promise.all([
+        const [chapters, npcs, appendix, how_to_run] = await Promise.all([
+          chapterTask(),
           Promise.all(npcTasks),
           appendixTask(),
           howToRunTask(),
