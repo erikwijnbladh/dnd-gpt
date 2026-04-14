@@ -7,3 +7,4 @@
 *.pyc
 .env.local
 /__pycache__
+package-lock.json
